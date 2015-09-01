@@ -7,9 +7,9 @@ import os
 import argparse
 import subprocess
 import inspect
-import csv
 import re
 import multiprocessing
+from Bio import SeqIO
 import warnings
 with warnings.catch_warnings():
     warnings.simplefilter('ignore')
@@ -31,6 +31,7 @@ parser=argparse.ArgumentParser(prog='mhc-OTU_cluster.py', usage="%(prog)s [optio
 parser.add_argument('-f','--fastq', dest="FASTQ", required=True, help='FASTQ file (Required)')
 parser.add_argument('-o','--out', default='out', help='Base output name')
 parser.add_argument('-e','--maxee', default='1.0', help='Quality trim EE value')
+parser.add_argument('-l','--length', default='auto', help='Trim Length')
 parser.add_argument('-p','--pct_otu', default=99, help="OTU Clustering Percent")
 parser.add_argument('-m','--minsize', default='2', help='Min size to keep for clustering')
 parser.add_argument('-u','--usearch', dest="usearch", default='usearch8', help='USEARCH8 EXE')
@@ -41,7 +42,7 @@ cpus = multiprocessing.cpu_count() - 1
 cpus = str(cpus)
 
 #open log file for usearch8 stderr redirect
-log_name = args.out + '.log'
+log_name = args.out + '.EE' + args.maxee + '.log'
 if os.path.isfile(log_name):
     os.remove(log_name)
 log_file = open(log_name, 'ab')
@@ -52,23 +53,6 @@ try:
 except OSError:
     print "%s not found in your PATH, exiting." % usearch 
     os._exit(1)
-
-'''#this is for formatting fastq to same length - don't need here as using fasta
-#first load in sequences, and make them all the same length for clustering/filtering.
-pad_out = args.out + '.padded.fq'
-pad_file = open(pad_out, 'wb')
-print "\nCMD: Padding Sequences to %i bp\n" % (args.pad_length)
-from Bio.SeqIO.QualityIO import FastqGeneralIterator
-for title, seq, qual in FastqGeneralIterator(open(args.FASTQ)):
-    L = len(seq)
-    if L < args.pad_length:
-        Seq = seq + (args.pad_length - L)*'N'
-        Qual = qual + (args.pad_length - L)*'I'
-    else:
-        Seq = seq
-        Qual = qual
-    pad_file.write ("@%s\n%s\n+\n%s\n" % (title, Seq, Qual))
-pad_file.close()'''
     
 #now run usearch8 fastq filtering step, output to fasta
 filter_out = args.out + '.EE' + args.maxee + '.filter.fa'
@@ -77,17 +61,13 @@ subprocess.call([usearch, '-fastq_filter', args.FASTQ, '-fastq_maxee', args.maxe
 
 #now run HMMer3 to filter contaminant DRB sequences out.
 print "CMD: Running HMMER3 using MHC DRB HMM model (using %s cpus)\n" % cpus
-hmm_out = args.out + '.DRB.hmm.txt'
+hmm_out = args.out + '.EE' + args.maxee + '.DRB.hmm.txt'
 hmm = script_path + '/lib/MHC_DNA.hmm'
 FNULL = open(os.devnull, 'w')
 subprocess.call(['hmmscan', '--cpu', cpus, '--domtblout', hmm_out, hmm, filter_out], stdout = FNULL, stderr = FNULL)
 
 #now parse HMMer results
 print "CMD: Filtering HMM results"
-import warnings
-with warnings.catch_warnings():
-    warnings.simplefilter('ignore')
-    from Bio import SearchIO
 #now parse the hmmer results
 q_list = []
 l_list = []
@@ -105,20 +85,23 @@ avg_len = sum / counter
 print "%10u sequences passed filter" % counter
 print "%10u bp is average length" % avg_len
 
-print "\nCMD: Retrieving results and trimming/padding to average length for clustering\n"
-
+if args.length == 'auto':
+    trim_len = avg_len
+else:
+    trim_len = int(args.length)
+    
+print "\nCMD: Retrieving results and trimming/padding to %i bp for clustering\n" % trim_len
 #now retrieve seqs in the "pass" list by looping through the query list, make same length
-pass_out = args.out + '.hmm.pass.fa'
+pass_out = args.out + '.EE' + args.maxee + '.hmm.pass.fa'
 pass_handle = open(pass_out, 'wb')
-from Bio import SeqIO
 filtered = SeqIO.parse(filter_out, "fasta")
 for rec in filtered:
     if rec.id in q_list:
         L = len(rec.seq)
-        if L < avg_len:
-            Seq = rec.seq + (avg_len - L)*'N'
+        if L < trim_len:
+            Seq = rec.seq + (trim_len - L)*'N'
         else:
-            T = avg_len - 1
+            T = trim_len - 1
             Seq = rec.seq[:T]
         pass_handle.write(">%s\n%s\n" % (rec.id, Seq))
 pass_handle.close()
@@ -136,14 +119,28 @@ subprocess.call([usearch, '-sortbysize', derep_out, '-minsize', args.minsize, '-
 #now run clustering algorithm
 radius = str(100 - int(args.pct_otu))
 otu_out = args.out + '.EE' + args.maxee + '.otus.fa'
-print "CMD: Clustering OTUs\n%s -cluster_otus %s -sizein -sizeout -relabel MHC_ -otu_radius_pct %s -otus %s\n" % (usearch, sort_out, radius, otu_out)
+print "CMD: Clustering OTUs\n%s -cluster_otus %s -sizein -sizeout -relabel MHC_ -otu_radius_pct %s -otus %s" % (usearch, sort_out, radius, otu_out)
 subprocess.call([usearch, '-cluster_otus', sort_out, '-sizein', '-sizeout', '-relabel', 'MHC_', '-otu_radius_pct', radius, '-otus', otu_out], stdout = log_file, stderr = log_file)
 
+#Fix OTUs, remove trailing N's
+fix_otus = args.out + '.EE' + args.maxee + '.fixed.otus.fa'
+fix_handle = open(fix_otus, 'wb')
+fix = open(otu_out, 'rb')
+otu_count = 0
+for rec in SeqIO.parse(fix, "fasta"):
+    otu_count += 1
+    Seq = re.sub('[^GATC]', "", str(rec.seq).upper())
+    fix_handle.write(">%s\n%s\n" % (rec.id, Seq))
+fix_handle.close()
+fix.close()
+print "%10u total OTUs\n" % otu_count
+    
 #now map reads back to OTUs
 uc_out = args.out + '.EE' + args.maxee + '.mapping.uc'
 mapping_pct = str(float(args.pct_otu) / 100)
-print "CMD: Mapping Reads to OTUs\n%s -usearch_global %s -strand plus -id %s -db %s -uc %s\n" % (usearch, pass_out, mapping_pct, otu_out, uc_out)
-subprocess.call([usearch, '-usearch_global', pass_out, '-strand', 'plus', '-id', mapping_pct, '-db', otu_out, '-uc', uc_out], stdout = log_file, stderr = log_file)
+#mapping_pct = '0.97'
+print "CMD: Mapping Reads to OTUs\n%s -usearch_global %s -strand plus -id %s -db %s -uc %s\n" % (usearch, pass_out, mapping_pct, fix_otus, uc_out)
+subprocess.call([usearch, '-usearch_global', pass_out, '-strand', 'plus', '-id', mapping_pct, '-db', fix_otus, '-uc', uc_out], stdout = log_file, stderr = log_file)
 
 #Build OTU table
 otu_table = args.out + '.EE' + args.maxee + '.otu_table.txt'
@@ -160,7 +157,7 @@ print ("Filtered FASTQ:        %s" % (filter_out))
 print ("HMM Pass FASTA:        %s" % (pass_out))
 print ("Dereplicated FASTA:    %s" % (derep_out))
 print ("Sorted FASTA:          %s" % (sort_out))
-print ("Clustered OTUs:        %s" % (otu_out))
+print ("Clustered OTUs:        %s" % (fix_otus))
 print ("UCLUST Mapping file:   %s" % (uc_out))
 print ("OTU Table:             %s" % (otu_table))
 print ("USEARCH LogFile:       %s" % (log_name))

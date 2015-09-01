@@ -119,14 +119,28 @@ pass_handle.close()
 #now run clustering algorithm
 radius = str(100 - int(args.pct_otu))
 otu_out = args.out + '.EE' + args.maxee + '.otus.fa'
-print "CMD: Clustering OTUs\n%s -cluster_otus %s -sizein -sizeout -relabel MHC_ -otu_radius_pct %s -otus %s\n" % (usearch, sort_out, radius, otu_out)
+print "CMD: Clustering OTUs\n%s -cluster_otus %s -sizein -sizeout -relabel MHC_ -otu_radius_pct %s -otus %s" % (usearch, sort_out, radius, otu_out)
 subprocess.call([usearch, '-cluster_otus', pass_out, '-sizein', '-sizeout', '-relabel', 'MHC_', '-otu_radius_pct', radius, '-otus', otu_out], stdout = log_file, stderr = log_file)
 
+#Fix OTUs, remove trailing N's
+fix_otus = args.out + '.EE' + args.maxee + '.fixed.otus.fa'
+fix_handle = open(fix_otus, 'wb')
+fix = open(otu_out, 'rb')
+otu_count = 0
+for rec in SeqIO.parse(fix, "fasta"):
+    otu_count += 1
+    Seq = re.sub('[^GATC]', "", str(rec.seq).upper())
+    fix_handle.write(">%s\n%s\n" % (rec.id, Seq))
+fix_handle.close()
+fix.close()
+print "%10u total OTUs\n" % otu_count
+
 #now map reads back to OTUs
-mapping_pct = str(float(args.pct_otu) / 100)
+#mapping_pct = str(float(args.pct_otu) / 100)
+mapping_pct = '0.97'
 uc_out = args.out + '.EE' + args.maxee + '.mapping.uc'
-print "CMD: Mapping Reads to OTUs\n%s -usearch_global %s -strand plus -id %s -db %s -uc %s\n" % (usearch, args.FASTQ, mapping_pct, otu_out, uc_out)
-subprocess.call([usearch, '-usearch_global', args.FASTQ, '-strand', 'plus', '-id', mapping_pct, '-db', otu_out, '-uc', uc_out], stdout = log_file, stderr = log_file)
+print "CMD: Mapping Reads to OTUs\n%s -usearch_global %s -strand plus -id %s -db %s -uc %s\n" % (usearch, filter_out, mapping_pct, otu_out, uc_out)
+subprocess.call([usearch, '-usearch_global', filter_out, '-strand', 'plus', '-id', mapping_pct, '-db', fix_otus, '-uc', uc_out], stdout = log_file, stderr = log_file)
 
 #Build OTU table
 otu_table = args.out + '.EE' + args.maxee + '.otu_table.txt'
@@ -143,7 +157,7 @@ print ("Filtered FASTQ:        %s" % (filter_out))
 print ("HMM Pass FASTA:        %s" % (pass_out))
 print ("Dereplicated FASTA:    %s" % (derep_out))
 print ("Sorted FASTA:          %s" % (sort_out))
-print ("Clustered OTUs:        %s" % (otu_out))
+print ("Clustered OTUs:        %s" % (fix_otus))
 print ("UCLUST Mapping file:   %s" % (uc_out))
 print ("OTU Table:             %s" % (otu_table))
 print ("USEARCH LogFile:       %s" % (log_name))

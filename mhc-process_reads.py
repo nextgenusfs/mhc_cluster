@@ -23,7 +23,7 @@ pgm_barcodes = script_path + '/lib/pgm_barcodes.fa'
 
 parser=argparse.ArgumentParser(prog='mhc-process_reads.py', usage="%(prog)s [options] file.fastq > out.fastq\n%(prog)s -h for help menu",
     description='''Script description....''',
-    epilog="""Written by Robert Edgar, modified slightly by Jon Palmer (2015) palmer.jona@gmail.com""",
+    epilog="""Written by Jon Palmer (2015) palmer.jona@gmail.com, modified from script by Robert Edgar""",
     formatter_class=MyFormatter)
 
 parser.add_argument('fastq', help='FASTQ file')
