@@ -22,9 +22,12 @@ sudo chmod +x /path/to/usearch8.0.1623_i86osx32
 sudo ln -s /path/to/usearch8.0.1623_i86osx32 /usr/local/bin/usearch8
 ```
 
-You will also need to have HMMer3 installed, simpliest way on MacOSX is with Homebrew
+You will also need to have HMMer3 installed, simpliest way on MacOSX is with Homebrew (http://brew.sh).  And then you can tap the homebrew/science rep (https://github.com/Homebrew/homebrew-science)
 
-`brew install hmmer`
+```
+brew tap homebrew/science
+brew install hmmer
+```
 
 ####Processing Ion Torrent Data:####
 
