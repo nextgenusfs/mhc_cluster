@@ -35,6 +35,7 @@ parser.add_argument('-l','--length', default='auto', help='Trim Length')
 parser.add_argument('-p','--pct_otu', default=99, help="OTU Clustering Percent")
 parser.add_argument('-m','--minsize', default='2', help='Min size to keep for clustering')
 parser.add_argument('-u','--usearch', dest="usearch", default='usearch8', help='USEARCH8 EXE')
+parser.add_argument('--translate', action='store_true', help='Translate OTUs to protein space')
 args=parser.parse_args()
 
 #find cpus, use 1 less than total
@@ -60,10 +61,10 @@ print "\nCMD: Quality Filtering\n%s -fastq_filter %s -fastq_maxee %s -fastq_qmax
 subprocess.call([usearch, '-fastq_filter', args.FASTQ, '-fastq_maxee', args.maxee, '-fastq_qmax', '45', '-fastaout', filter_out], stdout = log_file, stderr = log_file)
 
 #now run HMMer3 to filter contaminant DRB sequences out.
-print "CMD: Running HMMER3 using MHC DRB HMM model (using %s cpus)\n" % cpus
 hmm_out = args.out + '.EE' + args.maxee + '.DRB.hmm.txt'
 hmm = script_path + '/lib/MHC_DNA.hmm'
 FNULL = open(os.devnull, 'w')
+print "CMD: Running HMMER3 using MHC DRB HMM model (using %s cpus)\nhmmscan --cpu %s --domtblout %s %s %s\n" % (cpus, cpus, hmm_out, hmm, filter_out)
 subprocess.call(['hmmscan', '--cpu', cpus, '--domtblout', hmm_out, hmm, filter_out], stdout = FNULL, stderr = FNULL)
 
 #now parse HMMer results
@@ -148,6 +149,36 @@ uc2tab = script_path + "/lib/uc2otutab.py"
 print "CMD: Creating OTU Table\npython %s %s > %s" % (uc2tab, uc_out, otu_table)
 os.system('%s %s %s %s %s' % ('python', uc2tab, uc_out, '>', otu_table))
 
+#translate to protein space (optional)
+if args.translate:
+    trans_out = args.out + '.EE' + args.maxee + '.proteins.fa'
+    print "\nCMD: Translating to Protein Space\n%s -fastx_findorfs %s -aaout %s -orfstyle 7 -mincodons 40\n" % (usearch, fix_otus, trans_out)
+    subprocess.call([usearch, '-fastx_findorfs', fix_otus, '-aaout', trans_out, '-orfstyle', '7', '-mincodons', '40'], stdout = log_file, stderr = log_file)
+    
+    #HMM against translated amino acids
+    trans_hmm = args.out + '.EE' + args.maxee + '.proteins.hmm.txt'
+    hmm_prot = script_path + '/lib/MHC.hmm'
+    print "CMD: Running HMMER3 MHC HMM model (using %s cpus)\nhmmscan --cpu %s --tblout %s %s %s" % (cpus, cpus, trans_hmm, hmm_prot, trans_out)
+    subprocess.call(['hmmscan', '--cpu', cpus, '--tblout', trans_hmm, hmm_prot, trans_out], stdout = FNULL, stderr = FNULL)
+    
+    #now filter results for best hit
+    hmmer_prots = open(trans_hmm, 'r')
+    hit_list = []
+    for qresult in SearchIO.parse(hmmer_prots, "hmmer3-tab"):
+        hits = qresult.hits
+        if len(hits) > 0:
+            hit_list.append(hits[0].query_id)
+    hmmer_prots.close()
+    
+    #now filter the fasta file to get only hits that have MHC domain
+    pass_prot = args.out + '.EE' + args.maxee + '.proteins.pass.fa'
+    pass_file = open(pass_prot, 'wb')
+    prot_filtered = SeqIO.parse(trans_out, "fasta")
+    for rec in prot_filtered:
+        if rec.id in hit_list:
+            pass_file.write(">%s\n%s\n" % (rec.id, rec.seq))
+    pass_file.close()
+
 #Print location of files to STDOUT
 print "\n------------------------------------------------"
 print "OTU Clustering Script has Finished Successfully"
@@ -158,6 +189,8 @@ print ("HMM Pass FASTA:        %s" % (pass_out))
 print ("Dereplicated FASTA:    %s" % (derep_out))
 print ("Sorted FASTA:          %s" % (sort_out))
 print ("Clustered OTUs:        %s" % (fix_otus))
+if args.translate:
+    print ("Translated OTUs:       %s" % (pass_prot))
 print ("UCLUST Mapping file:   %s" % (uc_out))
 print ("OTU Table:             %s" % (otu_table))
 print ("USEARCH LogFile:       %s" % (log_name))

@@ -43,7 +43,7 @@ The next step is to quality filter the data (remove low quality reads), remove c
 
 `mhc-OTU_cluster.py -f data.demux.fq -o output`
 
-This script is a wrapper for hmmscan and USEARCH8, resulting in an OTU table, multi-fasta OTU file, etc. for the end result.  Here the reads are filtered with a max expected errors of 1.0, filtered with an HMM DRB2 DNA model, trim/padded to average length of those reads that pass the filter, and then run through the UPARSE pipeline (dereplicate, sort, cluster, map to OTUs, build OTU table).
+This script is a wrapper for hmmscan and USEARCH8, resulting in an OTU table, multi-fasta OTU file, etc. for the end result.  Here the reads are filtered with a max expected errors of 1.0, filtered with an HMM DRB2 DNA model, trim/padded to average length of those reads that pass the filter, and then run through the UPARSE pipeline (dereplicate, sort, cluster, map to OTUs, build OTU table).  Additionally, there is a `--translate` option that will translate the OTUs to protein space and filter the 6-frame translation for ORFs that match a protein MHC HMM model.  OTUs that return multiple protein hits, likely contain an intron.
     
 ####Dependencies####
 python, biopython, USEARCH8 (accessible in PATH; alternatively you can pass in the variable `-u /path/to/usearch8` to scripts requiring USEARCH8).
