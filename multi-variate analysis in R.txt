@@ -1,3 +1,5 @@
+#Written by Michelle Jusino (2015) 
+
 #You started R, now you have to load vegan and any other packages you need.
 library(vegan)
 
