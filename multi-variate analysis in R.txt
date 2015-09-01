@@ -1,0 +1,95 @@
+#You started R, now you have to load vegan and any other packages you need.
+library(vegan)
+
+#Error bar function, this is for adding error bars to ordination plots, we used SD. 
+
+error.bar.x <- function(x, y, upper, lower=upper, length=0.1,...){
+  if(length(x) != length(y) | length(y) !=length(lower) | length(lower) != length(upper))
+    stop("vectors must be same length")
+  arrows(x+upper,y, x-lower, y, angle=90, code=3, length=length, ...)
+}
+
+error.bar.y <- function(x, y, upper, lower=upper, length=0.1,...){
+  if(length(x) != length(y) | length(y) !=length(lower) | length(lower) != length(upper))
+    stop("vectors must be same length")
+  arrows(x,y+upper, x, y-lower, angle=90, code=3, length=length, ...)
+}
+
+#Okay, now set the working directory (this is the folder your data frame is in). 
+
+setwd(dir)
+##example: setwd('/Users/work/Desktop/MHC')
+
+
+#Load your data. Note, this script assumes your OTU / sample matrix is formatted correctly and is in a comma separated values file (.csv). This script also assumes that your environmental variables (i.e. state, etc) are in the same file, we will separate them with the code. These can certainly start as two separate files, but if you do that, make sure the sample_IDs are in the same order in both files, and make sure to load both. 
+
+yd<-data.frame(read.csv(file = “yd.csv”))
+##example: MHC<-data.frame(read.csv(file = "ion_sanger.csv"))
+
+#make an OTU matrix (i.e. separate your community data from your environmental data)
+yd.mat<-yd[,otumatrixrow1:otumatrixrowN]
+##example: MHC.mat<-MHC[,3:39]
+
+#Convert your OTU matrix to binary 
+yd.mat[yd.mat>0]<-1
+## example: MHC.mat[MHC.mat>0] <-1
+
+#Generate a distance matrix (this step is necessary for certain distance metrics, others such as Jaccard or Bray can be written into your function calls). Here we are using raupcrick similarity, the betasim code is also included.
+
+raupyd<-raupcrick(yd.mat, null=”r1”, nsimul=999, chase=FALSE)
+betayd<-betadiver(yd.mat, “sim”)
+
+##example raup: raupmhc<-raupcrick(MHC.mat,null="r1",nsimul=999,chase=FALSE)
+##example betasim: betamhc<-betadiver(MHC.mat,"sim")
+
+#PERMANOVA hypothesis tests
+##with raupcrick
+rauupydA<-adonis(raupyd~yd$variable, permutations=9999)
+##example: mhcA<-adonis(raupmhc~MHC$state,permutations=9999)
+
+##with betasim
+betaydA<-adonis(betayd~yd$variable, permutations=9999)
+##example: mhcB<-adonis(betamhc~MHC$state, permutations=9999)
+
+## with jaccard
+ydJAC<-adonis(yd.mat~yd$variable, permutations=9999, method=”jaccard”)
+##example: mhcJAC<-adonis(MHC.mat~MHC$state, permutations=9999, method= "jaccard")
+
+mhcJAC
+###test for multivariate homogeneity of group dispersions (betadisper). Note you can do this and all following functions with other distance metrics, but here we provide code for raupcrick only. 
+
+ydbet<-betadisper(raupyd, yd$variable)
+anova(ydbet)
+permutest(ydbet, pairwise=TRUE, yd$variable)
+
+##example: mhcbet<-betadisper(raupmhc, MHC$state)
+#anova(mhcbet)
+#permutest(mhcbet, pairwise=TRUE, permutations=999)
+
+###NMDS ordination
+yd.nmds<-metaMDS(raupyd, k=2, autotransform=FALSE, wascores=F)
+
+##example: mhc.nmds<-metaMDS(raupmhc, k=2, autotransform=FALSE, wascores=F)
+
+###NMDS ordination plot by variable, this script generates a plot based on the means and standard deviations of the points of the first two NMDS axes. An example is provided.
+##example:
+#mhcmean.1 <- aggregate(mhc.nmds$points[,1], by = list(MHC$state), FUN=mean)
+#mhcmean.2 <- aggregate(mhc.nmds$points[,2], by = list(MHC$state), FUN=mean)
+#mhcerror.1 <- aggregate(mhc.nmds$points[,1], by = list(MHC$state), FUN=sd)
+#mhcerror.2 <- aggregate(mhc.nmds$points[,2], by = list(MHC$state), FUN=sd)
+
+#mhc.stuffs <- cbind(mhcmean.1, mhcmean.2[,2], mhcerror.1[,2], mhcerror.2[,2])
+#names(mhc.stuffs) <- c('Treatment', 'Mean1','Mean2','SD1', 'SD2')
+
+#write.csv(mhc.stuffs,file='mhcstuffs2.csv', row.names=F)
+#d<-data.frame(read.csv(file='mhcstuffs2.csv'))
+
+#plot(1,1, ylim = c(min(d[,3] - d[,5]),max(d[,3] + d[,5])),
+     xlim = c(min(d[,2] - d[,4]),max(d[,2] + d[,4])),
+     type='n', xlab= 'NMDS axis 1', ylab='NMDS axis 2')
+
+#error.bar.x(d[,2],d[,3],d[,4], lwd = 2, col=c('dodgerblue','darkmagenta'))
+#error.bar.y(d[,2],d[,3],d[,5], lwd = 2, col=c('dodgerblue','darkmagenta'))
+#points(d[,2:3], pch= 19, cex = 3, col = c('dodgerblue','darkmagenta'), lwd = 2)
+#legend("topleft", legend = levels(MHC$state), pch=19, #col=c('dodgerblue','darkmagenta'), 
+       pt.cex=1.5, bty ="n")
