@@ -160,6 +160,7 @@ def OnRec(Label, Seq, Qual):
         L = len(Seq)
         if L < MinLen:
             TooShortCount += 1
+            OutCount -= 1
             return
         if L > LongRead:
             LongRead = L

@@ -9,12 +9,12 @@ import subprocess
 import inspect
 import re
 import multiprocessing
-from Bio import SeqIO
 import warnings
 with warnings.catch_warnings():
     warnings.simplefilter('ignore')
     from Bio import SearchIO
-
+    from Bio import SeqIO
+    
 #get script path for directory
 script_path = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
 
@@ -35,8 +35,13 @@ parser.add_argument('-l','--length', default='auto', help='Trim Length')
 parser.add_argument('-p','--pct_otu', default=99, help="OTU Clustering Percent")
 parser.add_argument('-m','--minsize', default='2', help='Min size to keep for clustering')
 parser.add_argument('-u','--usearch', dest="usearch", default='usearch8', help='USEARCH8 EXE')
-parser.add_argument('--translate', action='store_true', help='Translate OTUs to protein space')
+parser.add_argument('--translate', action='store_true', help='Translate OTUs')
 args=parser.parse_args()
+
+def natural_sort_key(s, _nsre=re.compile('([0-9]+)')):
+    return [int(text) if text.isdigit() else text.lower()
+            for text in re.split(_nsre, s)]
+
 
 #find cpus, use 1 less than total
 cpus = multiprocessing.cpu_count() - 1
@@ -54,6 +59,7 @@ try:
 except OSError:
     print "%s not found in your PATH, exiting." % usearch 
     os._exit(1)
+            
     
 #now run usearch8 fastq filtering step, output to fasta
 filter_out = args.out + '.EE' + args.maxee + '.filter.fa'
@@ -112,16 +118,21 @@ derep_out = args.out + '.EE' + args.maxee + '.derep.fa'
 print "CMD: De-replication\n%s -derep_fulllength %s -sizeout -fastaout %s\n" % (usearch, pass_out, derep_out)
 subprocess.call([usearch, '-derep_fulllength', pass_out, '-sizeout', '-fastaout', derep_out], stdout = log_file, stderr = log_file)
 
+#run UNOISE on dereplicated data
+#unoise_out = args.out + '.EE' + args.maxee + '.denoised.fa'
+#print "CMD: Denoising Data with UNOISE\n%s -cluster_fast %s -centroids %s -id 0.9 -maxdiffs 5 -abskew 10 -sizein -sizeout -sort size\n" % (usearch, derep_out, unoise_out)
+#subprocess.call([usearch, '-cluster_fast', derep_out, '-centroids', unoise_out, '-id', '0.9', '-maxdiffs', '5', '-abskew', '10', '-sizein', '-sizeout', '-sort', 'size'], stdout = log_file, stderr = log_file)
+
 #now run usearch 8 sort by size
 sort_out = args.out + '.EE' + args.maxee + '.sort.fa'
 print "CMD: Sorting by Size\n%s -sortbysize %s -minsize %s -fastaout %s\n" % (usearch, derep_out, args.minsize, sort_out)
 subprocess.call([usearch, '-sortbysize', derep_out, '-minsize', args.minsize, '-fastaout', sort_out], stdout = log_file, stderr = log_file)
 
 #now run clustering algorithm
-radius = str(100 - int(args.pct_otu))
+radius = str(100 - float(args.pct_otu))
 otu_out = args.out + '.EE' + args.maxee + '.otus.fa'
 print "CMD: Clustering OTUs\n%s -cluster_otus %s -sizein -sizeout -relabel MHC_ -otu_radius_pct %s -otus %s" % (usearch, sort_out, radius, otu_out)
-subprocess.call([usearch, '-cluster_otus', sort_out, '-sizein', '-sizeout', '-relabel', 'MHC_', '-otu_radius_pct', radius, '-otus', otu_out], stdout = log_file, stderr = log_file)
+subprocess.call([usearch, '-cluster_otus', sort_out, '-sizein', '-relabel', 'MHC_', '-otu_radius_pct', radius, '-otus', otu_out], stdout = log_file, stderr = log_file)
 
 #Fix OTUs, remove trailing N's
 fix_otus = args.out + '.EE' + args.maxee + '.fixed.otus.fa'
@@ -151,34 +162,70 @@ os.system('%s %s %s %s %s' % ('python', uc2tab, uc_out, '>', otu_table))
 
 #translate to protein space (optional)
 if args.translate:
+    print "\nCMD: Translating to Amino Acid Sequence\n"
     trans_out = args.out + '.EE' + args.maxee + '.proteins.fa'
-    print "\nCMD: Translating to Protein Space\n%s -fastx_findorfs %s -aaout %s -orfstyle 7 -mincodons 40\n" % (usearch, fix_otus, trans_out)
-    subprocess.call([usearch, '-fastx_findorfs', fix_otus, '-aaout', trans_out, '-orfstyle', '7', '-mincodons', '40'], stdout = log_file, stderr = log_file)
-    
+    trans_file = open(trans_out, "w")
+    trans_in = open(fix_otus, 'r')
+    for rec in SeqIO.parse(trans_in, "fasta"):
+        trans_file.write(">%s;frame_1\n" % (rec.id))
+        trans_file.write("%s\n" % (rec.seq.translate(to_stop=True)))
+        trans_file.write(">%s;frame_2\n" % (rec.id))
+        trans_file.write("%s\n" % (rec.seq[1:].translate(to_stop=True)))
+        trans_file.write(">%s;frame_3\n" % (rec.id))
+        trans_file.write("%s\n" % (rec.seq[2:].translate(to_stop=True)))
+    trans_in.close()
+    trans_file.close()
+ 
     #HMM against translated amino acids
     trans_hmm = args.out + '.EE' + args.maxee + '.proteins.hmm.txt'
     hmm_prot = script_path + '/lib/MHC.hmm'
-    print "CMD: Running HMMER3 MHC HMM model (using %s cpus)\nhmmscan --cpu %s --tblout %s %s %s" % (cpus, cpus, trans_hmm, hmm_prot, trans_out)
-    subprocess.call(['hmmscan', '--cpu', cpus, '--tblout', trans_hmm, hmm_prot, trans_out], stdout = FNULL, stderr = FNULL)
+    print "\nCMD: Running HMMER3 MHC HMM model (using %s cpus)\nhmmscan --cpu %s --tblout %s %s %s" % (cpus, cpus, trans_hmm, hmm_prot, trans_out)
+    subprocess.call(['hmmscan', '--cpu', cpus, '--domtblout', trans_hmm, hmm_prot, trans_out], stdout = FNULL, stderr = FNULL)
     
-    #now filter results for best hit
+    #now filter results for best hit, and get alignment coordinates
     hmmer_prots = open(trans_hmm, 'r')
-    hit_list = []
-    for qresult in SearchIO.parse(hmmer_prots, "hmmer3-tab"):
+    hit_list = {}
+    for qresult in SearchIO.parse(hmmer_prots, "hmmscan3-domtab"):
         hits = qresult.hits
         if len(hits) > 0:
-            hit_list.append(hits[0].query_id)
+            hit_list['%s' % hits[0].query_id] = []
+            hit_list['%s' % hits[0].query_id].append(hits[0].hsps[0].query_start)
+            hit_list['%s' % hits[0].query_id].append(hits[0].hsps[0].query_end)
     hmmer_prots.close()
-    
+
     #now filter the fasta file to get only hits that have MHC domain
     pass_prot = args.out + '.EE' + args.maxee + '.proteins.pass.fa'
     pass_file = open(pass_prot, 'wb')
-    prot_filtered = SeqIO.parse(trans_out, "fasta")
-    for rec in prot_filtered:
-        if rec.id in hit_list:
-            pass_file.write(">%s\n%s\n" % (rec.id, rec.seq))
+    SeqRecords = SeqIO.to_dict(SeqIO.parse(trans_out, "fasta"))
+    for key in sorted(hit_list.keys(), key=natural_sort_key):
+        start = hit_list[key][0]
+        end = hit_list[key][1]
+        subseq = SeqRecords[key][start:end].seq
+        pass_file.write(">%s;%s-%s\n%s\n" % (key, start, end, subseq))
     pass_file.close()
-
+    
+    #finally concatenate duplicated sequences
+    concat_out = args.out + '.EE' + args.maxee + '.proteins.unique.fa'
+    keep = {}
+    total_count = 0
+    concat_file = open(concat_out, 'wb')
+    Seq = SeqIO.parse(pass_prot, "fasta")
+    for rec in Seq:
+        total_count += 1
+        sequence=str(rec.seq).upper()
+        if sequence not in keep:
+            keep[sequence]=rec.id
+        else:
+            keep[sequence]+="|"+rec.id
+    flipKeep = {y:x for x,y in keep.iteritems()}
+    unique_count = 0
+    for key in sorted(flipKeep, key=natural_sort_key):
+        unique_count += 1
+        concat_file.write(">"+key+"\n"+flipKeep[key]+"\n")
+    concat_file.close()
+    print "%10u total proteins" % total_count
+    print "%10u unique proteins" % unique_count
+    
 #Print location of files to STDOUT
 print "\n------------------------------------------------"
 print "OTU Clustering Script has Finished Successfully"
@@ -187,11 +234,13 @@ print ("Input FASTQ:           %s" % (args.FASTQ))
 print ("Filtered FASTQ:        %s" % (filter_out))
 print ("HMM Pass FASTA:        %s" % (pass_out))
 print ("Dereplicated FASTA:    %s" % (derep_out))
+#print ("De-noised FASTA:       %s" % (unoise_out))
 print ("Sorted FASTA:          %s" % (sort_out))
 print ("Clustered OTUs:        %s" % (fix_otus))
 if args.translate:
     print ("Translated OTUs:       %s" % (pass_prot))
-print ("UCLUST Mapping file:   %s" % (uc_out))
+    print ("Translated Unique:     %s" % (concat_out))
+print ("USEARCH Mapping file:  %s" % (uc_out))
 print ("OTU Table:             %s" % (otu_table))
 print ("USEARCH LogFile:       %s" % (log_name))
 print "------------------------------------------------"
