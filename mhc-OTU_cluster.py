@@ -33,6 +33,7 @@ parser.add_argument('-o','--out', default='out', help='Base output name')
 parser.add_argument('-e','--maxee', default='1.0', help='Quality trim EE value')
 parser.add_argument('-l','--length', default='auto', help='Trim Length')
 parser.add_argument('-p','--pct_otu', default=99, help="OTU Clustering Percent")
+parser.add_argument('-n','--num_diff', default='False', help="OTU Clustering Number of differences")
 parser.add_argument('-m','--minsize', default='2', help='Min size to keep for clustering')
 parser.add_argument('-u','--usearch', dest="usearch", default='usearch8', help='USEARCH8 EXE')
 parser.add_argument('--translate', action='store_true', help='Translate OTUs')
@@ -59,6 +60,9 @@ try:
 except OSError:
     print "%s not found in your PATH, exiting." % usearch 
     os._exit(1)
+
+if args.num_diff != 'False':
+    print "\nWarning:  --num_diff %s was specified, this will override the --pct_otu option" % args.num_diff
             
     
 #now run usearch8 fastq filtering step, output to fasta
@@ -129,7 +133,14 @@ print "CMD: Sorting by Size\n%s -sortbysize %s -minsize %s -fastaout %s\n" % (us
 subprocess.call([usearch, '-sortbysize', derep_out, '-minsize', args.minsize, '-fastaout', sort_out], stdout = log_file, stderr = log_file)
 
 #now run clustering algorithm
-radius = str(100 - float(args.pct_otu))
+if args.num_diff == 'False':
+    radius = str(100 - float(args.pct_otu))
+    mapping_pct = str(float(args.pct_otu) / 100)
+else:
+    diff = int(args.length) - int(args.num_diff)
+    percent = float(diff) / float(args.length)
+    radius = str(100 - (100 * percent))
+    mapping_pct = "{:0.3f}".format(percent)
 otu_out = args.out + '.EE' + args.maxee + '.otus.fa'
 print "CMD: Clustering OTUs\n%s -cluster_otus %s -sizein -sizeout -relabel MHC_ -otu_radius_pct %s -otus %s" % (usearch, sort_out, radius, otu_out)
 subprocess.call([usearch, '-cluster_otus', sort_out, '-sizein', '-relabel', 'MHC_', '-otu_radius_pct', radius, '-otus', otu_out], stdout = log_file, stderr = log_file)
@@ -149,8 +160,6 @@ print "%10u total OTUs\n" % otu_count
     
 #now map reads back to OTUs
 uc_out = args.out + '.EE' + args.maxee + '.mapping.uc'
-mapping_pct = str(float(args.pct_otu) / 100)
-#mapping_pct = '0.97'
 print "CMD: Mapping Reads to OTUs\n%s -usearch_global %s -strand plus -id %s -db %s -uc %s\n" % (usearch, pass_out, mapping_pct, fix_otus, uc_out)
 subprocess.call([usearch, '-usearch_global', pass_out, '-strand', 'plus', '-id', mapping_pct, '-db', fix_otus, '-uc', uc_out], stdout = log_file, stderr = log_file)
 
