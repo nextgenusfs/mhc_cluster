@@ -3,13 +3,8 @@
 #This script runs trims FASTQ to set length, Quality Filters, filters for DRB locus, and clusters using USEARCH8
 #written by Jon Palmer palmer.jona at gmail dot com
 
-import os
-import argparse
-import subprocess
-import inspect
-import re
-import multiprocessing
-import warnings
+import os, argparse, subprocess, inspect, re, multiprocessing, warnings, itertools
+from natsort import natsorted
 with warnings.catch_warnings():
     warnings.simplefilter('ignore')
     from Bio import SearchIO
@@ -43,6 +38,18 @@ def natural_sort_key(s, _nsre=re.compile('([0-9]+)')):
     return [int(text) if text.isdigit() else text.lower()
             for text in re.split(_nsre, s)]
 
+def countfasta(input):
+    count = 0
+    with open(input, 'rU') as f:
+        for line in f:
+            if line.startswith (">"):
+                count += 1
+    return count
+    
+def countfastq(input):
+    lines = sum(1 for line in open(input))
+    count = int(lines) / 4
+    return count
 
 #find cpus, use 1 less than total
 cpus = multiprocessing.cpu_count() - 1
@@ -63,12 +70,15 @@ except OSError:
 
 if args.num_diff != 'False':
     print "\nWarning:  --num_diff %s was specified, this will override the --pct_otu option" % args.num_diff
-            
+
+#count input
+print '\nLoading records: ' + '{0:,}'.format(countfastq(args.FASTQ)) + ' reads'
     
 #now run usearch8 fastq filtering step, output to fasta
 filter_out = args.out + '.EE' + args.maxee + '.filter.fa'
-print "\nCMD: Quality Filtering\n%s -fastq_filter %s -fastq_maxee %s -fastq_qmax 45 -fastaout %s\n" % (usearch, args.FASTQ, args.maxee, filter_out)
+print "\nCMD: Quality Filtering\n%s -fastq_filter %s -fastq_maxee %s -fastq_qmax 45 -fastaout %s" % (usearch, args.FASTQ, args.maxee, filter_out)
 subprocess.call([usearch, '-fastq_filter', args.FASTQ, '-fastq_maxee', args.maxee, '-fastq_qmax', '45', '-fastaout', filter_out], stdout = log_file, stderr = log_file)
+print "Output: " + '{0:,}'.format(countfasta(filter_out)) + ' reads\n'
 
 #now run HMMer3 to filter contaminant DRB sequences out.
 hmm_out = args.out + '.EE' + args.maxee + '.DRB.hmm.txt'
@@ -101,7 +111,7 @@ if args.length == 'auto':
 else:
     trim_len = int(args.length)
     
-print "\nCMD: Retrieving results and trimming/padding to %i bp for clustering\n" % trim_len
+print "\nCMD: Retrieving results and trimming/padding to %i bp for clustering" % trim_len
 #now retrieve seqs in the "pass" list by looping through the query list, make same length
 pass_out = args.out + '.EE' + args.maxee + '.hmm.pass.fa'
 pass_handle = open(pass_out, 'wb')
@@ -116,21 +126,19 @@ for rec in filtered:
             Seq = rec.seq[:T]
         pass_handle.write(">%s\n%s\n" % (rec.id, Seq))
 pass_handle.close()
+print "Output: " + '{0:,}'.format(countfasta(pass_out)) + ' reads\n'
 
 #now run usearch8 full length dereplication
 derep_out = args.out + '.EE' + args.maxee + '.derep.fa'
-print "CMD: De-replication\n%s -derep_fulllength %s -sizeout -fastaout %s\n" % (usearch, pass_out, derep_out)
+print "CMD: De-replication\n%s -derep_fulllength %s -sizeout -fastaout %s" % (usearch, pass_out, derep_out)
 subprocess.call([usearch, '-derep_fulllength', pass_out, '-sizeout', '-fastaout', derep_out], stdout = log_file, stderr = log_file)
-
-#run UNOISE on dereplicated data
-#unoise_out = args.out + '.EE' + args.maxee + '.denoised.fa'
-#print "CMD: Denoising Data with UNOISE\n%s -cluster_fast %s -centroids %s -id 0.9 -maxdiffs 5 -abskew 10 -sizein -sizeout -sort size\n" % (usearch, derep_out, unoise_out)
-#subprocess.call([usearch, '-cluster_fast', derep_out, '-centroids', unoise_out, '-id', '0.9', '-maxdiffs', '5', '-abskew', '10', '-sizein', '-sizeout', '-sort', 'size'], stdout = log_file, stderr = log_file)
+print "Output: " + '{0:,}'.format(countfasta(derep_out)) + ' reads\n'
 
 #now run usearch 8 sort by size
 sort_out = args.out + '.EE' + args.maxee + '.sort.fa'
 print "CMD: Sorting by Size\n%s -sortbysize %s -minsize %s -fastaout %s\n" % (usearch, derep_out, args.minsize, sort_out)
 subprocess.call([usearch, '-sortbysize', derep_out, '-minsize', args.minsize, '-fastaout', sort_out], stdout = log_file, stderr = log_file)
+
 
 #now run clustering algorithm
 if args.num_diff == 'False':
@@ -161,7 +169,7 @@ print "%10u total OTUs\n" % otu_count
 #now map reads back to OTUs
 uc_out = args.out + '.EE' + args.maxee + '.mapping.uc'
 print "CMD: Mapping Reads to OTUs\n%s -usearch_global %s -strand plus -id %s -db %s -uc %s\n" % (usearch, pass_out, mapping_pct, fix_otus, uc_out)
-subprocess.call([usearch, '-usearch_global', pass_out, '-strand', 'plus', '-id', mapping_pct, '-db', fix_otus, '-uc', uc_out], stdout = log_file, stderr = log_file)
+subprocess.call([usearch, '-usearch_global', pass_out, '-strand', 'plus', '-id', '0.97', '-db', fix_otus, '-uc', uc_out], stdout = log_file, stderr = log_file)
 
 #Build OTU table
 otu_table = args.out + '.EE' + args.maxee + '.otu_table.txt'
@@ -235,6 +243,45 @@ if args.translate:
     print "%10u total proteins" % total_count
     print "%10u unique proteins" % unique_count
     
+#output reads per Barcode for original, filtered, and hmm passed files
+#now loop through data and find barcoded samples, counting each.....
+BarcodeCountA = {}
+with open(args.FASTQ, 'rU') as input:
+    header = itertools.islice(input, 0, None, 4)
+    for line in header:
+        ID = line.split("=")[-1].split(";")[0]
+        if ID not in BarcodeCountA:
+            BarcodeCountA[ID] = 1
+        else:
+            BarcodeCountA[ID] += 1
+BarcodeCountB = {}
+with open(filter_out, 'rU') as input:
+    for line in input:
+        if line.startswith('>'):
+            ID = line.split("=")[-1].split(";")[0]
+            if ID not in BarcodeCountB:
+                BarcodeCountB[ID] = 1
+            else:
+                BarcodeCountB[ID] += 1
+BarcodeCountC = {}
+with open(pass_out, 'rU') as input:
+    for line in input:
+        if line.startswith('>'):
+            ID = line.split("=")[-1].split(";")[0]
+            if ID not in BarcodeCountC:
+                BarcodeCountC[ID] = 1
+            else:
+                BarcodeCountC[ID] += 1
+bc_count = args.out + '.barcode.counts.txt'
+with open(bc_count, 'w') as output:
+    output.write("Barcode\tDemux_total\tFilter_total\tHMM_total\n")               
+    for k,v in natsorted(BarcodeCountA.items(), key=lambda (k,v): v, reverse=True):
+        bc_name = str(k)
+        allCount = str(BarcodeCountA[k])
+        filtCount = BarcodeCountB.get(k)
+        hmmCount = BarcodeCountC.get(k)
+        output.write("%s\t%s\t%s\t%s\n" % (bc_name, allCount, filtCount, hmmCount))
+
 #Print location of files to STDOUT
 print "\n------------------------------------------------"
 print "OTU Clustering Script has Finished Successfully"
@@ -252,6 +299,7 @@ if args.translate:
 print ("USEARCH Mapping file:  %s" % (uc_out))
 print ("OTU Table:             %s" % (otu_table))
 print ("USEARCH LogFile:       %s" % (log_name))
+print ("Reads per Barcode:     %s" % (bc_count))
 print "------------------------------------------------"
 
  

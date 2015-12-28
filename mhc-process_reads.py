@@ -1,10 +1,6 @@
 #!/usr/bin/env python
 
-import sys
-import os
-import inspect
-import argparse
-import shutil
+import sys, os, inspect, argparse, shutil
 from Bio import SeqIO
 import lib.fasta as fasta
 import lib.fastq as fastq
@@ -19,10 +15,10 @@ class MyFormatter(argparse.ArgumentDefaultsHelpFormatter):
 
 #get script path and barcode file name
 script_path = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
-pgm_barcodes = script_path + '/lib/pgm_barcodes.fa'
+pgm_barcodes = os.path.join(script_path, 'lib', 'pgm_barcodes.fa')
 
 parser=argparse.ArgumentParser(prog='mhc-process_reads.py', usage="%(prog)s [options] file.fastq > out.fastq\n%(prog)s -h for help menu",
-    description='''Script description....''',
+    description='''This script processes Ion Torrent PGM data by demultiplexing barcodes and trimming primer sequences.  Only full length sequences are kept, i.e. that have both a forward and reverse primer.  By default, 2 mismatches in primer sequence is allowed.''',
     epilog="""Written by Jon Palmer (2015) palmer.jona@gmail.com, modified from script by Robert Edgar""",
     formatter_class=MyFormatter)
 
@@ -33,10 +29,11 @@ parser.add_argument('-b','--list_barcodes', dest="barcodes", default='all', help
 parser.add_argument('-n','--name_prefix', dest="prefix", default='R_', help='Prefix for renaming reads')
 parser.add_argument('-m','--min_len', default='50', help='Minimum read length to keep')
 parser.add_argument('--rev_comp', action='store_true', help='Reverse complement reads')
+parser.add_argument('--mismatches', default=2, type=int, help='Num of primer mismatches (integer)')
 parser.add_argument('--mult_samples', dest="multi", default='False', help='Combine multiple samples (i.e. FACE1)')
 args=parser.parse_args()
 
-MAX_PRIMER_MISMATCHES = 2
+MAX_PRIMER_MISMATCHES = args.mismatches
 
 FileName = args.fastq
 FwdPrimer = args.F_primer
