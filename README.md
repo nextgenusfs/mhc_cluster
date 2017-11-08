@@ -1,7 +1,7 @@
-### MHC DRB amplicon Script:###
+### MHC DRB amplicon Script:
 
 ___
-#### Installation:####
+#### Installation:
 You can do a git clone to copy this repository:
 
 `git clone https://github.com/nextgenusfs/mhc_cluster.git`
@@ -35,6 +35,6 @@ brew tap homebrew/science
 brew install hmmer
 ```
    
-#### Dependencies####
+#### Dependencies
 python, biopython, VSEARCH, AMPtk, USEARCH9 (accessible in PATH; alternatively you can pass in the variable `-u /path/to/usearch8` to scripts requiring USEARCH8).
 
